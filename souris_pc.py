@@ -6,7 +6,9 @@ import asyncio
 import json
 import os
 import random
+import re
 import socket
+import subprocess
 import threading
 import tkinter as tk
 
@@ -178,22 +180,37 @@ PIN = load_pin()
 # ---------- Adresses IP du PC ----------
 def local_ips():
     ips = []
+
+    def add(ip):
+        if not ip.startswith(("127.", "169.254.", "0.")) and ip not in ips:
+            ips.append(ip)
+
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("8.8.8.8", 80))
-        ips.append(s.getsockname()[0])
+        add(s.getsockname()[0])
     except OSError:
         pass
     finally:
         s.close()
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            ip = info[4][0]
-            if not ip.startswith(("127.", "169.254.")) and ip not in ips:
-                ips.append(ip)
+            add(info[4][0])
     except OSError:
         pass
-    return ips or ["Aucune adresse : connecte le PC au WiFi"]
+    try:  # lit toutes les cartes réseau (WiFi, câble, modem USB)
+        out = subprocess.run(
+            ["ipconfig"], capture_output=True, text=True, errors="ignore",
+            creationflags=0x08000000, timeout=3,
+        ).stdout
+        for line in out.splitlines():
+            if "IPv4" in line:
+                m = re.search(r"(\d{1,3}(?:\.\d{1,3}){3})", line)
+                if m:
+                    add(m.group(1))
+    except Exception:
+        pass
+    return ips or ["Aucune adresse : connecte le PC au WiFi ou au câble"]
 
 
 # ---------- Serveur ----------
@@ -254,7 +271,7 @@ BG, FG, MUTED, ACCENT = "#14161b", "#e8eaf0", "#8b93a7", "#3e63dd"
 
 root = tk.Tk()
 root.title("Cedric souris pc")
-root.geometry("440x420")
+root.geometry("460x520")
 root.resizable(False, False)
 root.configure(bg=BG)
 
@@ -263,7 +280,10 @@ status_var = tk.StringVar(value=state["status"])
 tk.Label(root, textvariable=status_var, font=("Segoe UI", 10), bg=BG, fg=MUTED, wraplength=400).pack()
 
 tk.Label(root, text="Adresse IP du PC (à taper dans l'app)", font=("Segoe UI", 10), bg=BG, fg=MUTED).pack(pady=(22, 2))
-tk.Label(root, text="\n".join(local_ips()), font=("Consolas", 18, "bold"), bg=BG, fg=FG).pack()
+ip_var = tk.StringVar(value="\n".join(local_ips()))
+tk.Label(root, textvariable=ip_var, font=("Consolas", 18, "bold"), bg=BG, fg=FG).pack()
+tk.Label(root, text="Plusieurs adresses ? Essaie-les une par une dans l'app.\nCâble USB : active « Modem USB », la liste se met à jour toute seule.",
+         font=("Segoe UI", 9), bg=BG, fg=MUTED, wraplength=420).pack(pady=(6, 0))
 
 tk.Label(root, text="Code PIN", font=("Segoe UI", 10), bg=BG, fg=MUTED).pack(pady=(22, 2))
 pin_var = tk.StringVar(value=PIN)
@@ -289,8 +309,14 @@ tk.Label(
 ).pack()
 
 
+tick = {"n": 0}
+
+
 def refresh():
     status_var.set(state["status"])
+    tick["n"] += 1
+    if tick["n"] % 6 == 0:
+        ip_var.set("\n".join(local_ips()))
     root.after(500, refresh)
 
 
