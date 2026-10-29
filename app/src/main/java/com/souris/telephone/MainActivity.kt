@@ -2,11 +2,15 @@ package com.souris.telephone
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.graphics.Color
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
 import android.view.WindowManager
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -18,6 +22,8 @@ import android.widget.Toast
 class MainActivity : Activity() {
 
     private var web: WebView? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private var timeout: Runnable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -25,7 +31,19 @@ class MainActivity : Activity() {
         showForm()
     }
 
+    private fun cancelTimeout() {
+        timeout?.let { handler.removeCallbacks(it) }
+        timeout = null
+    }
+
+    private fun fail(message: String) {
+        cancelTimeout()
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        showForm()
+    }
+
     private fun showForm() {
+        cancelTimeout()
         web?.destroy()
         web = null
         val prefs = getSharedPreferences("souris", MODE_PRIVATE)
@@ -72,24 +90,37 @@ class MainActivity : Activity() {
     private fun connect(address: String, pin: String) {
         val host = if (address.contains(":")) address else "$address:8765"
         val view = WebView(this)
+        view.setBackgroundColor(Color.parseColor("#0F1115"))
         view.settings.javaScriptEnabled = true
         view.settings.domStorageEnabled = true
         view.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(v: WebView, url: String) {
+                cancelTimeout()
+            }
+
             override fun onReceivedError(
                 v: WebView, request: WebResourceRequest, error: WebResourceError
             ) {
                 if (request.isForMainFrame) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Connexion impossible. Le serveur tourne sur le PC ?",
-                        Toast.LENGTH_LONG
-                    ).show()
-                    showForm()
+                    fail("Connexion impossible. Vérifie l'IP, le WiFi, et que le programme tourne sur le PC.")
+                }
+            }
+
+            override fun onReceivedHttpError(
+                v: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse
+            ) {
+                if (request.isForMainFrame) {
+                    if (errorResponse.statusCode == 403) fail("PIN incorrect.")
+                    else fail("Erreur du serveur (${errorResponse.statusCode}).")
                 }
             }
         }
         web = view
         setContentView(view)
+        timeout = Runnable {
+            fail("Pas de réponse du PC après 10 secondes. Pare-feu Windows, mauvaise IP ou WiFi différent ?")
+        }
+        handler.postDelayed(timeout!!, 10000)
         view.loadUrl("http://$host/?k=$pin")
     }
 
